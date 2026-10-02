@@ -1,0 +1,134 @@
+name: Build KALMUTTTG MP4 Video
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "**"
+
+jobs:
+  build-video:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Locate project folder
+        id: locate
+        shell: bash
+        run: |
+          echo "Searching repository for Gradle project..."
+
+          PROJECT_DIR=""
+
+          # Look for the project by its Gradle build file
+          while IFS= read -r file; do
+            DIR="$(dirname "$file")"
+
+            if [ -f "$DIR/gradlew" ] && \
+               [ -f "$DIR/build.gradle" ] && \
+               [ -f "$DIR/settings.gradle" ]; then
+              PROJECT_DIR="$DIR"
+              break
+            fi
+          done < <(find . -type f -name "build.gradle" -print)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: Could not locate the Gradle project."
+            echo "Repository contents:"
+            find . -maxdepth 4 -type f | sort
+            exit 1
+          fi
+
+          # Remove leading ./ for GitHub Actions
+          PROJECT_DIR="${PROJECT_DIR#./}"
+
+          echo "Found project:"
+          echo "$PROJECT_DIR"
+
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Verify project files
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          echo "=== PROJECT ==="
+          pwd
+
+          echo "=== FILES ==="
+          find . -maxdepth 3 -type f | sort
+
+          echo "=== REQUIRED FILES ==="
+
+          test -f gradlew
+          test -f build.gradle
+          test -f settings.gradle
+          test -f index.html
+          test -d Assets
+
+          echo "All required files found."
+
+      - name: Make Gradle executable
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: chmod +x gradlew
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+          echo "FFmpeg version:"
+          ffmpeg -version | head -n 1
+
+      - name: Build MP4 with Gradle
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: |
+          ./gradlew renderVideo --no-daemon --stacktrace
+
+      - name: Locate generated MP4
+        id: output
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        shell: bash
+        run: |
+          echo "Searching for generated MP4..."
+
+          MP4="$(find . -type f -iname "*.mp4" | head -n 1)"
+
+          if [ -z "$MP4" ]; then
+            echo "ERROR: No MP4 file was generated."
+            find . -type f | sort
+            exit 1
+          fi
+
+          echo "Generated video:"
+          echo "$MP4"
+
+          echo "mp4=$MP4" >> "$GITHUB_OUTPUT"
+
+      - name: Check video
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: |
+          ffprobe \
+            -v error \
+            -show_entries format=duration \
+            -show_entries stream=codec_name,codec_type,width,height \
+            -of default=noprint_wrappers=1 \
+            "${{ steps.output.outputs.mp4 }}"
+
+      - name: Upload MP4
+        uses: actions/upload-artifact@v4
+        with:
+          name: KALMUTTTG-MP4-Video
+          path: ${{ steps.locate.outputs.project_dir }}/${{ steps.output.outputs.mp4 }}
+          if-no-files-found: error
+          retention-days: 30
