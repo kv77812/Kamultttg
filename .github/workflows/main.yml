@@ -12,46 +12,51 @@ jobs:
 
     steps:
 
-      # --------------------------------------------------
-      # 1. Get repository
-      # --------------------------------------------------
+      # ==========================================================
+      # 1. CHECK OUT REPOSITORY
+      # ==========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
-      # 2. Find and extract ZIP
-      # --------------------------------------------------
+
+      # ==========================================================
+      # 2. FIND AND EXTRACT ZIP
+      # ==========================================================
       - name: Locate and extract project ZIP
         id: extract
         shell: bash
         run: |
           set -e
 
-          echo "======================================"
+          echo "=========================================="
           echo "SEARCHING FOR PROJECT ZIP"
-          echo "======================================"
+          echo "=========================================="
 
           ZIP_FILE=""
 
-          # Find ZIP files while ignoring .git
           while IFS= read -r file; do
             ZIP_FILE="$file"
             break
-          done < <(find . -type f -iname "*.zip" \
-            -not -path "./.git/*" \
-            -print)
+          done < <(
+            find . \
+              -type f \
+              -iname "*.zip" \
+              -not -path "./.git/*" \
+              -print
+          )
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file was found."
+            echo "ERROR: No ZIP file found."
             echo ""
             echo "Repository contents:"
-            find . -maxdepth 3 -type f | sort
+            find . -maxdepth 5 -type f | sort
             exit 1
           fi
 
           echo "ZIP FOUND:"
           echo "$ZIP_FILE"
 
+          rm -rf extracted_project
           mkdir -p extracted_project
 
           echo ""
@@ -60,24 +65,25 @@ jobs:
           unzip -o "$ZIP_FILE" -d extracted_project
 
           echo ""
-          echo "EXTRACTED FILES:"
-          find extracted_project -maxdepth 5 -type f | sort
+          echo "EXTRACTION COMPLETE."
 
           echo ""
-          echo "ZIP extraction completed."
+          echo "EXTRACTED PROJECT:"
+          find extracted_project -maxdepth 8 -type f | sort
 
-      # --------------------------------------------------
-      # 3. Locate actual Gradle project
-      # --------------------------------------------------
+
+      # ==========================================================
+      # 3. LOCATE GRADLE PROJECT
+      # ==========================================================
       - name: Locate Gradle project
         id: locate
         shell: bash
         run: |
           set -e
 
-          echo "======================================"
+          echo "=========================================="
           echo "SEARCHING FOR GRADLE PROJECT"
-          echo "======================================"
+          echo "=========================================="
 
           PROJECT_DIR=""
 
@@ -85,13 +91,31 @@ jobs:
 
             DIR="$(dirname "$gradle_file")"
 
+            echo ""
             echo "Checking:"
             echo "$DIR"
 
-            # Accept either build.gradle or build.gradle.kts
-            if [ -f "$DIR/gradlew" ] && \
-               { [ -f "$DIR/build.gradle" ] || [ -f "$DIR/build.gradle.kts" ]; } && \
-               { [ -f "$DIR/settings.gradle" ] || [ -f "$DIR/settings.gradle.kts" ]; }; then
+            HAS_WRAPPER=false
+            HAS_BUILD=false
+            HAS_SETTINGS=false
+
+            if [ -f "$DIR/gradlew" ]; then
+              HAS_WRAPPER=true
+            fi
+
+            if [ -f "$DIR/build.gradle" ] || \
+               [ -f "$DIR/build.gradle.kts" ]; then
+              HAS_BUILD=true
+            fi
+
+            if [ -f "$DIR/settings.gradle" ] || \
+               [ -f "$DIR/settings.gradle.kts" ]; then
+              HAS_SETTINGS=true
+            fi
+
+            if [ "$HAS_WRAPPER" = true ] && \
+               [ "$HAS_BUILD" = true ] && \
+               [ "$HAS_SETTINGS" = true ]; then
 
               PROJECT_DIR="$DIR"
               break
@@ -101,7 +125,11 @@ jobs:
           done < <(
             find extracted_project \
               -type f \
-              \( -name "build.gradle" -o -name "build.gradle.kts" \) \
+              \( \
+                -name "build.gradle" \
+                -o \
+                -name "build.gradle.kts" \
+              \) \
               -print
           )
 
@@ -111,98 +139,124 @@ jobs:
             echo "ERROR: Gradle project could not be located."
 
             echo ""
-            echo "Full extracted project structure:"
-            find extracted_project -maxdepth 8 -print | sort
+            echo "Complete extracted structure:"
+            find extracted_project -maxdepth 10 -print | sort
 
             exit 1
           fi
 
           echo ""
-          echo "======================================"
+          echo "=========================================="
           echo "GRADLE PROJECT FOUND"
-          echo "======================================"
+          echo "=========================================="
 
+          echo "$PROJECT_DIR"
+
+          # Convert ./path to clean path.
+          PROJECT_DIR="${PROJECT_DIR#./}"
+
+          echo ""
+          echo "Clean project path:"
           echo "$PROJECT_DIR"
 
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
-      # --------------------------------------------------
-      # 4. Display project structure
-      # --------------------------------------------------
-      - name: Verify project
+
+      # ==========================================================
+      # 4. VERIFY GRADLE PROJECT
+      # ==========================================================
+      - name: Verify Gradle project
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -e
 
-          echo "======================================"
-          echo "PROJECT VERIFICATION"
-          echo "======================================"
+          echo "=========================================="
+          echo "VERIFYING PROJECT"
+          echo "=========================================="
 
           echo "Project directory:"
           pwd
 
           echo ""
           echo "Project files:"
-          find . -maxdepth 4 -type f | sort
+          find . -maxdepth 5 -type f | sort
 
           echo ""
           echo "Checking Gradle wrapper..."
 
-          test -f gradlew
-
-          echo "Gradle wrapper found."
+          if [ ! -f gradlew ]; then
+            echo "ERROR: gradlew was not found."
+            exit 1
+          fi
 
           chmod +x gradlew
 
-      # --------------------------------------------------
-      # 5. Java
-      # --------------------------------------------------
+          echo "Gradle wrapper OK."
+
+
+      # ==========================================================
+      # 5. JAVA 17
+      # ==========================================================
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # --------------------------------------------------
-      # 6. Gradle
-      # --------------------------------------------------
+
+      # ==========================================================
+      # 6. GRADLE
+      # ==========================================================
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # --------------------------------------------------
-      # 7. FFmpeg
-      # --------------------------------------------------
+
+      # ==========================================================
+      # 7. INSTALL FFMPEG
+      # ==========================================================
       - name: Install FFmpeg
         shell: bash
         run: |
           set -e
 
+          echo "=========================================="
+          echo "INSTALLING FFMPEG"
+          echo "=========================================="
+
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
           echo ""
-          echo "FFmpeg installed:"
+          echo "FFmpeg version:"
           ffmpeg -version | head -n 1
 
-      # --------------------------------------------------
-      # 8. Show available Gradle tasks
-      # --------------------------------------------------
+          echo ""
+          echo "FFprobe version:"
+          ffprobe -version | head -n 1
+
+
+      # ==========================================================
+      # 8. SHOW GRADLE TASKS
+      # ==========================================================
       - name: Check Gradle tasks
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
+          set -e
+
           chmod +x gradlew
 
-          echo "======================================"
+          echo "=========================================="
           echo "AVAILABLE GRADLE TASKS"
-          echo "======================================"
+          echo "=========================================="
 
           ./gradlew tasks --all --no-daemon
 
-      # --------------------------------------------------
-      # 9. Build / render MP4
-      # --------------------------------------------------
+
+      # ==========================================================
+      # 9. BUILD MP4
+      # ==========================================================
       - name: Render MP4 video
         working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
@@ -211,27 +265,32 @@ jobs:
 
           chmod +x gradlew
 
-          echo "======================================"
-          echo "BUILDING KALMUTTTG MP4"
-          echo "======================================"
+          echo "=========================================="
+          echo "RENDERING KALMUTTTG MP4"
+          echo "=========================================="
 
           ./gradlew renderVideo \
             --no-daemon \
             --stacktrace
 
-      # --------------------------------------------------
-      # 10. Find MP4
-      # --------------------------------------------------
+          echo ""
+          echo "Gradle video rendering completed."
+
+
+      # ==========================================================
+      # 10. FIND GENERATED MP4
+      # ==========================================================
       - name: Locate generated MP4
         id: output
-        working-directory: ${{ steps.locate.outputs.project_dir }}
         shell: bash
         run: |
           set -e
 
-          echo "======================================"
+          echo "=========================================="
           echo "SEARCHING FOR GENERATED MP4"
-          echo "======================================"
+          echo "=========================================="
+
+          PROJECT="${{ steps.locate.outputs.project_dir }}"
 
           MP4_FILE=""
 
@@ -239,7 +298,7 @@ jobs:
             MP4_FILE="$file"
             break
           done < <(
-            find . \
+            find "$PROJECT/output" \
               -type f \
               -iname "*.mp4" \
               -print
@@ -247,11 +306,15 @@ jobs:
 
           if [ -z "$MP4_FILE" ]; then
 
+            echo ""
             echo "ERROR: No MP4 file was generated."
 
             echo ""
-            echo "Project contents:"
-            find . -maxdepth 8 -type f | sort
+            echo "Project output:"
+            find "$PROJECT" \
+              -maxdepth 10 \
+              -type f \
+              | sort
 
             exit 1
           fi
@@ -260,39 +323,150 @@ jobs:
           echo "MP4 FOUND:"
           echo "$MP4_FILE"
 
+          # Remove any leading ./.
+          MP4_FILE="${MP4_FILE#./}"
+
+          # Remove accidental ./ segments.
+          MP4_FILE="$(python3 -c 'import os,sys; print(os.path.normpath(sys.argv[1]))' "$MP4_FILE")"
+
+          echo ""
+          echo "CLEAN MP4 PATH:"
+          echo "$MP4_FILE"
+
+          # Make absolutely sure there is no relative path traversal.
+          if [[ "$MP4_FILE" == *"/../"* ]] || \
+             [[ "$MP4_FILE" == "../"* ]] || \
+             [[ "$MP4_FILE" == "./"* ]] || \
+             [[ "$MP4_FILE" == *"/./"* ]]; then
+
+            echo "ERROR: Unsafe MP4 path:"
+            echo "$MP4_FILE"
+            exit 1
+          fi
+
           echo "mp4=$MP4_FILE" >> "$GITHUB_OUTPUT"
 
-      # --------------------------------------------------
-      # 11. Validate MP4
-      # --------------------------------------------------
-      - name: Validate MP4
-        working-directory: ${{ steps.locate.outputs.project_dir }}
+
+      # ==========================================================
+      # 11. CHECK FILE EXISTS
+      # ==========================================================
+      - name: Verify MP4 exists
         shell: bash
         run: |
           set -e
 
           MP4="${{ steps.output.outputs.mp4 }}"
 
-          echo "======================================"
-          echo "VIDEO INFORMATION"
-          echo "======================================"
+          echo "=========================================="
+          echo "VERIFYING MP4 FILE"
+          echo "=========================================="
+
+          if [ ! -f "$MP4" ]; then
+            echo "ERROR: MP4 does not exist:"
+            echo "$MP4"
+            exit 1
+          fi
+
+          echo "MP4 exists."
+
+          echo ""
+          echo "File size:"
+          ls -lh "$MP4"
+
+
+      # ==========================================================
+      # 12. VALIDATE VIDEO
+      # ==========================================================
+      - name: Validate MP4
+        shell: bash
+        run: |
+          set -e
+
+          MP4="${{ steps.output.outputs.mp4 }}"
+
+          echo "=========================================="
+          echo "VALIDATING VIDEO"
+          echo "=========================================="
 
           ffprobe \
             -v error \
             -show_entries \
             format=duration,size,format_name \
             -show_entries \
-            stream=codec_name,codec_type,width,height,sample_rate \
+            stream=codec_name,codec_type,width,height,sample_rate,channels \
             -of default=noprint_wrappers=1 \
             "$MP4"
 
-      # --------------------------------------------------
-      # 12. Upload finished video
-      # --------------------------------------------------
+          echo ""
+          echo "Video validation completed."
+
+
+      # ==========================================================
+      # 13. CHECK VIDEO DURATION
+      # ==========================================================
+      - name: Check video duration
+        shell: bash
+        run: |
+          set -e
+
+          MP4="${{ steps.output.outputs.mp4 }}"
+
+          DURATION=$(ffprobe \
+            -v error \
+            -show_entries format=duration \
+            -of default=noprint_wrappers=1:nokey=1 \
+            "$MP4")
+
+          echo "Video duration: $DURATION seconds"
+
+          python3 - "$DURATION" <<'PY'
+          import sys
+
+          duration = float(sys.argv[1])
+
+          # Allow a tiny encoding tolerance.
+          if duration < 59.5 or duration > 60.5:
+              print(f"ERROR: Expected approximately 60 seconds, got {duration}")
+              sys.exit(1)
+
+          print("Duration check passed.")
+          PY
+
+
+      # ==========================================================
+      # 14. COPY FINAL VIDEO TO CLEAN ARTIFACT DIRECTORY
+      # ==========================================================
+      - name: Prepare final MP4
+        shell: bash
+        run: |
+          set -e
+
+          MP4="${{ steps.output.outputs.mp4 }}"
+
+          echo "=========================================="
+          echo "PREPARING FINAL VIDEO"
+          echo "=========================================="
+
+          rm -rf final_video
+          mkdir -p final_video
+
+          cp "$MP4" \
+            "final_video/KALMUTTTG_Final_Video.mp4"
+
+          echo ""
+          echo "Final artifact:"
+          ls -lh final_video/KALMUTTTG_Final_Video.mp4
+
+
+      # ==========================================================
+      # 15. UPLOAD MP4
+      # ==========================================================
       - name: Upload MP4 artifact
         uses: actions/upload-artifact@v4
         with:
           name: KALMUTTTG-MP4-Video
-          path: ${{ steps.locate.outputs.project_dir }}/${{ steps.output.outputs.mp4 }}
+          path: final_video/KALMUTTTG_Final_Video.mp4
           if-no-files-found: error
           retention-days: 30
+          compression-level: 6
+          overwrite: true
